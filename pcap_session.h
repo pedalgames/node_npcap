@@ -50,7 +50,7 @@ private:
     size_t snap_length;
     char *header_data;
 
-    uv_poll_t poll_handle;
+    HANDLE evt_handle;
     Nan::AsyncResource* poll_resource = NULL;
     bool poll_init = false;
 };

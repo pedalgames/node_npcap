@@ -1,6 +1,5 @@
 #include <assert.h>
 #include <pcap/pcap.h>
-#include <sys/ioctl.h>
 #include <cstring>
 #include <string.h>
 
@@ -123,7 +122,7 @@ void PcapSession::Dispatch(const Nan::FunctionCallbackInfo<Value>& info)
         packet_count = pcap_dispatch(session->pcap_handle, 1, PacketReady, (u_char *)session);
 
         if (packet_count == -2) {
-            FinalizeClose(session);
+            this->FinalizeClose();
         }
     } while (packet_count > 0);
 
@@ -285,21 +284,6 @@ void PcapSession::Open(bool live, const Nan::FunctionCallbackInfo<Value>& info)
       pcap_freecode(&session->fp);
     }
 
-    // Work around buffering bug in BPF on OSX 10.6 as of May 19, 2010
-    // This may result in dropped packets under load because it disables the (broken) buffer
-    // http://seclists.org/tcpdump/2010/q1/110
-#if defined(__APPLE_CC__) || defined(__APPLE__)
-    #include <net/bpf.h>
-    int fd = pcap_get_selectable_fd(session->pcap_handle);
-    if (fd < 0) {
-        Nan::ThrowError(pcap_geterr(session->pcap_handle));
-        return;
-    }
-    int v = 1;
-    ioctl(fd, BIOCIMMEDIATE, &v);
-    // TODO - check return value
-#endif
-
     int link_type = pcap_datalink(session->pcap_handle);
 
     Local<Value> ret;
@@ -396,15 +380,15 @@ void PcapSession::StartPolling(const Nan::FunctionCallbackInfo<Value>& info)
         Nan::ThrowError("Error: pcap session already closed");
         return;
     }
-
-    int fd = pcap_get_selectable_fd(session->pcap_handle);
+    HANDLE fd = pcap_getevent(session->pcap_handle);
+    // int fd = pcap_get_selectable_fd(session->pcap_handle);
     if (fd < 0) {
         Nan::ThrowError(pcap_geterr(session->pcap_handle));
         return;
     }
 
     session->poll_handle.data = session;
-    if (uv_poll_init(Nan::GetCurrentEventLoop(), &session->poll_handle, fd) < 0) {
+    if (uv_poll_init_socket(Nan::GetCurrentEventLoop(), &session->poll_handle, fd) < 0) {
         Nan::ThrowError("Couldn't initialize UV poll");
         return;
     }

@@ -1,12 +1,10 @@
 {
-  "name": "pcap",
-  "version": "3.1.0",
-  "description": "raw packet capture, decoding, and analysis",
-  "author": "Matt Ranney <mjr@ranney.com>",
+  "name": "npcap",
+  "version": "0.0.1",
+  "description": "raw packet capture, decoding, and analysis, fork from node-pcap",
+  "author": "Frankie Zeng <frankie.zeng@nxp.com>",
   "license": "MIT",
-  "maintainers": [
-    "Ujjwal Thaakar <ujjwalthaakar@gmail.com>"
-  ],
+  "maintainers": [],
   "main": "./pcap",
   "types": "pcap.d.ts",
   "repository": {
@@ -18,7 +16,7 @@
   },
   "dependencies": {
     "@types/node": "^10.0.0",
-    "nan": "^2.14.0"
+    "node-addon-api": "^2.0.2"
   },
   "devDependencies": {
     "grunt": "^1.0.4",

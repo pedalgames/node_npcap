@@ -1,17 +1,31 @@
-#include <assert.h>
+#include <nan.h>
 #include <pcap/pcap.h>
-#include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/ioctl.h>
-#include <arpa/inet.h>
-
+#include <winsock2.h>
 #include "pcap_session.h"
 
 using namespace v8;
+
+static void init_npcap_dll_path()
+{
+	BOOL(WINAPI *SetDllDirectory)(LPCTSTR);
+	char sysdir_name[512];
+	int len;
+
+	SetDllDirectory = (BOOL(WINAPI *)(LPCTSTR)) GetProcAddress(GetModuleHandle("kernel32.dll"), "SetDllDirectoryA");
+	if (SetDllDirectory == NULL) {
+      Nan::ThrowError("Error in SetDllDirectory");
+	}
+	else {
+		len = GetSystemDirectory(sysdir_name, 480);	//	be safe
+		if (!len)
+      Nan::ThrowError("Error in GetSystemDirectory");
+			// error("Error in GetSystemDirectory (%d)", GetLastError());
+		strcat(sysdir_name, "\\Npcap");
+		if (SetDllDirectory(sysdir_name) == 0)
+      Nan::ThrowError("Error in SetDllDirectory(\"System32\\Npcap\")");
+	}
+}
+
 
 // Helper method, convert a sockaddr* (AF_INET or AF_INET6) to a string, and set it as the property
 // named 'key' in the Address object you pass in.
@@ -139,6 +153,8 @@ void Initialize(Local<Object> exports)
 {
     Nan::HandleScope scope;
 
+    init_npcap_dll_path();
+    
     PcapSession::Init(exports);
 
     Nan::Set(exports, Nan::New("findalldevs").ToLocalChecked(), Nan::New<FunctionTemplate>(FindAllDevs)->GetFunction(Nan::GetCurrentContext()).ToLocalChecked());

@@ -54,6 +54,10 @@ function PcapSession(is_live, device_name, filter, buffer_size, snap_length, out
         this.buffer_timeout = 1000; // Default buffer timeout is 1s
     }
 
+    this.buf = Buffer.alloc(this.snap_length);
+    this.header = Buffer.alloc(16);
+    this.session.load_buffer(this.buf, this.header);
+
     const packet_ready = this.on_packet_ready.bind(this);
     if (this.is_live) {
         this.device_name = this.device_name || binding.default_device();
@@ -63,29 +67,7 @@ function PcapSession(is_live, device_name, filter, buffer_size, snap_length, out
     }
 
     this.opened = true;
-    this.buf = Buffer.alloc(this.snap_length);
-    this.header = Buffer.alloc(16);
-
-    if (is_live) {
-        // callback when pcap has data to read. multiple packets may be readable.
-        this.session.read_callback = () => {
-            var packets_read = this.session.dispatch(this.buf, this.header);
-            if (packets_read < 1) {
-                this.empty_reads += 1;
-            }
-        };
-        this.session.start_polling();
-        process.nextTick(this.session.read_callback); // kickstart to prevent races
-    } else {
-        timers.setImmediate(() => {
-            var packets = 0;
-            do {
-                packets = this.session.dispatch(this.buf, this.header);
-            } while ( packets > 0 );
-            this.emit("complete");
-        });
-    }
-
+    
     events.EventEmitter.call(this);
 }
 util.inherits(PcapSession, events.EventEmitter);

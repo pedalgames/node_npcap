@@ -2,24 +2,22 @@
 #include "stdio.h"
 
 Napi::Object PcapSession::Init(Napi::Env env, Napi::Object exports) {
-  Napi::HandleScope scope(env);
+   Napi::HandleScope scope(env);
 
-  Napi::Function func =
+    Napi::Function func =
       DefineClass(env,
                   "PcapSession",
                   {
                    InstanceMethod("open_live", &PcapSession::OpenLive),
                    InstanceMethod("open_offline", &PcapSession::OpenOffline),
-                   InstanceMethod("dispatch", &PcapSession::Dispatch),
-                   //InstanceMethod("start_polling",&PcapSession::StartPolling),
-                   //InstanceMethod("close",&PcapSession::Close),
-                   //InstanceMethod("stats",&PcapSession::Stats),
-                   //InstanceMethod("inject",&PcapSession::Inject),
+                   InstanceMethod("load_buffer", &PcapSession::LoadBuffer),
+                   InstanceMethod("close",&PcapSession::Close),
+                   InstanceMethod("stats",&PcapSession::Stats),
+                   InstanceMethod("inject",&PcapSession::Inject),
                    });
     Napi::FunctionReference* constructor = new Napi::FunctionReference();  
     *constructor = Napi::Persistent(func);
-    //env.SetInstanceData(constructor);
-    //constructor.SuppressDestruct();
+    // constructor->SuppressDestruct();
 
     exports.Set("PcapSession", func);
     return exports;
@@ -27,55 +25,104 @@ Napi::Object PcapSession::Init(Napi::Env env, Napi::Object exports) {
 
 PcapSession::PcapSession(const Napi::CallbackInfo& info)
     : Napi::ObjectWrap<PcapSession>(info) {
-  
+        
+    this->opened=false;
     return;
 }
 
-void PcapSession::PacketReady(u_char *s, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
-    PcapSession* session = (PcapSession *)s;
 
-    printf("##:%d",(uint32_t)session);
+DWORD WINAPI PcapSession::PacketThread(LPVOID lpParam)
+{
+    PcapSession* the=(PcapSession*)lpParam;
+    int res;
+    struct pcap_pkthdr* pkthdr;
+    const u_char* packet;
+    the->opened=true;
+    while((res = pcap_next_ex( the->pcap_handle, &pkthdr,&packet)) >= 0){
+        if(res == 0)
+            /* Timeout elapsed */
+            continue;
+        
+        
+        size_t copy_len = pkthdr->caplen;
 
-    if (session->pcap_dump_handle != NULL) {
-        pcap_dump((u_char *) session->pcap_dump_handle, pkthdr, packet);
+        if (copy_len > the->buffer_length) {
+            copy_len = the->buffer_length;
+        }
+        memcpy(the->buffer_data, packet, copy_len);
+
+
+        memcpy(the->header_data, &(pkthdr->ts.tv_sec), 4);
+        memcpy(the->header_data + 4, &(pkthdr->ts.tv_usec), 4);
+        memcpy(the->header_data + 8, &(pkthdr->caplen), 4);
+        memcpy(the->header_data + 12, &(pkthdr->len), 4);
+
+        the->tsFn.BlockingCall();
     }
-
-    size_t copy_len = pkthdr->caplen;
-
-    if (copy_len > session->buffer_length) {
-        copy_len = session->buffer_length;
-    }
-
-    memcpy(session->buffer_data, packet, copy_len);
-    
-    // copy header data to fixed offsets in second buffer from user
-    memcpy(session->header_data, &(pkthdr->ts.tv_sec), 4);
-    memcpy(session->header_data + 4, &(pkthdr->ts.tv_usec), 4);
-    memcpy(session->header_data + 8, &(pkthdr->caplen), 4);
-    memcpy(session->header_data + 12, &(pkthdr->len), 4);
-
-    //call js callback
-    session->tsFn.BlockingCall();
-    
+    pcap_close(the->pcap_handle);
+    the->opened=false;
+    return 0; 
 }
 
+Napi::Value PcapSession::Stats(const Napi::CallbackInfo& info){
+    Napi::Env env = info.Env();
+    struct pcap_stat ps;
+    
+    if (this->pcap_handle == NULL) {
+        Napi::TypeError::New(env, "Error: pcap session already closed").ThrowAsJavaScriptException();
+    }
 
-Napi::Value PcapSession::Dispatch(const Napi::CallbackInfo& info){
+    if (pcap_stats(this->pcap_handle, &ps) == -1) {
+        Napi::TypeError::New(env, "Error in pcap_stats").ThrowAsJavaScriptException();
+    }
+
+    Napi::Object stats_obj=Napi::Object::New(env);
+    stats_obj.Set("ps_recv",Napi::Number::New(env,ps.ps_recv));
+    stats_obj.Set("ps_drop",Napi::Number::New(env,ps.ps_drop));
+    stats_obj.Set("ps_ifdrop",Napi::Number::New(env,ps.ps_ifdrop));
+
+    return stats_obj;
+}
+
+Napi::Value PcapSession::Inject(const Napi::CallbackInfo& info){
     Napi::Env env = info.Env();
 
-    if (info.Length() != 2) {
-        Napi::TypeError::New(env, "Dispatch takes exactly two arguments").ThrowAsJavaScriptException();
-        return Napi::Number::New(info.Env(),-1);
+    if (info.Length() != 1) {
+        Napi::TypeError::New(env, "Inject takes exactly one argument").ThrowAsJavaScriptException();
     }
 
     if (!info[0].IsBuffer()) {
         Napi::TypeError::New(env, "First argument must be a buffer").ThrowAsJavaScriptException();
-        return Napi::Number::New(info.Env(),-1);
+    }
+
+    if (this->pcap_handle == NULL) {
+        Napi::TypeError::New(env, "Error: pcap session already closed").ThrowAsJavaScriptException();
+    }
+
+    Napi::Buffer<char> buffer_obj=info[0].As<Napi::Buffer<char>>();
+    char* bufferData = buffer_obj.Data();
+    size_t bufferLength = buffer_obj.Length();
+
+    if (pcap_inject(this->pcap_handle, bufferData, bufferLength) != (int)bufferLength) {
+        Napi::TypeError::New(env, "Pcap inject failed.").ThrowAsJavaScriptException();
+    }
+    return Napi::Number::New(env,bufferLength);
+}
+
+
+Napi::Value PcapSession::LoadBuffer(const Napi::CallbackInfo& info){
+    Napi::Env env = info.Env();
+
+    if (info.Length() != 2) {
+        Napi::TypeError::New(env, "Dispatch takes exactly two arguments").ThrowAsJavaScriptException();
+    }
+
+    if (!info[0].IsBuffer()) {
+        Napi::TypeError::New(env, "First argument must be a buffer").ThrowAsJavaScriptException();
     }
 
     if (!info[1].IsBuffer()) {
         Napi::TypeError::New(env, "Second argument must be a buffer").ThrowAsJavaScriptException();
-        return Napi::Number::New(info.Env(),-1);
     }
 
     Napi::Buffer<char> buffer_obj=info[0].As<Napi::Buffer<char>>();
@@ -84,16 +131,20 @@ Napi::Value PcapSession::Dispatch(const Napi::CallbackInfo& info){
     Napi::Buffer<char> header_obj=info[1].As<Napi::Buffer<char>>();
     this->header_data = header_obj.Data();
 
-    int packet_count;
-    do {
-        packet_count = pcap_dispatch(this->pcap_handle, 1, PcapSession::PacketReady, (u_char *)this);
-        
-        if (packet_count == -2) {
-            //this->FinalizeClose();
-        }
-    } while (packet_count > 0);
+    return Napi::Number::New(info.Env(),0);
+}
 
-    return Napi::Number::New(info.Env(),packet_count);
+Napi::Value PcapSession::Close(const Napi::CallbackInfo& info){
+    Napi::Env env = info.Env();
+
+    if (this->pcap_dump_handle != NULL) {
+        pcap_dump_close(this->pcap_dump_handle);
+        this->pcap_dump_handle = NULL;
+    }
+    if (this->pcap_handle != NULL) {
+        pcap_breakloop(this->pcap_handle);
+    }
+    return Napi::Number::New(env,0);
 }
 
 Napi::Value PcapSession::Open(bool live, const Napi::CallbackInfo& info)
@@ -101,50 +152,42 @@ Napi::Value PcapSession::Open(bool live, const Napi::CallbackInfo& info)
     char errbuf[PCAP_ERRBUF_SIZE];
     Napi::Env env = info.Env();
 
+    if(this->opened)
+        return Napi::Number::New(env,0);
+
     if (info.Length() == 10) {
         if (!info[0].IsString()) {
             Napi::TypeError::New(env, "pcap Open: info[0] must be a String").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[1].IsString()) {
             Napi::TypeError::New(env, "pcap Open: info[1] must be a String").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[2].IsNumber()) {
             Napi::TypeError::New(env, "pcap Open: info[2] must be a Number").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[3].IsNumber()) {
             Napi::TypeError::New(env, "pcap Open: info[3] must be a Number").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[4].IsString()) {
             Napi::TypeError::New(env, "pcap Open: info[4] must be a String").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[5].IsFunction()) {
             Napi::TypeError::New(env, "pcap Open: info[5] must be a Function").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[6].IsBoolean()) {
             Napi::TypeError::New(env, "pcap Open: info[6] must be a Boolean").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[7].IsNumber()) {
             Napi::TypeError::New(env, "pcap Open: info[7] must be a Number").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[8].IsFunction()) { // warning function
             Napi::TypeError::New(env, "pcap Open: info[8] must be a Function").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
         if (!info[9].IsBoolean()) {
             Napi::TypeError::New(env, "pcap Open: info[9] must be a Boolean").ThrowAsJavaScriptException();
-            return Napi::Number::New(env,-1);
         }
     } else {
         Napi::TypeError::New(env, "pcap Open: expecting 8 arguments").ThrowAsJavaScriptException();
-        return Napi::Number::New(env,-1);
     }
     std::string device = info[0].As<Napi::String>().Utf8Value().data();
     std::string filter = info[1].As<Napi::String>().Utf8Value().data();
@@ -154,10 +197,7 @@ Napi::Value PcapSession::Open(bool live, const Napi::CallbackInfo& info)
     int snap_length = info[3].As<Napi::Number>().Int32Value();
     int buffer_timeout = info[7].As<Napi::Number>().Int32Value();
     std::string pcap_output_filename = info[4].As<Napi::String>().Utf8Value().data();
-
     this->tsFn=Napi::ThreadSafeFunction::New(env,info[5].As<Napi::Function>(),"callback",0,1);
-
-
     this->pcap_dump_handle = NULL;
 
     if (live) {
@@ -263,7 +303,7 @@ Napi::Value PcapSession::Open(bool live, const Napi::CallbackInfo& info)
         ret = Napi::String::New(info.Env(),errbuf);
         break;
     }
-    
+    this->rThread=CreateThread(NULL, NULL, PacketThread, (LPVOID)this, NULL, NULL);
     return ret;
 }
 

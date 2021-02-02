@@ -1,7 +1,6 @@
-#include <napi.h>
-#include <pcap/pcap.h>
-#include <winsock2.h>
+
 #include "npcap_session.h"
+#include <winsock2.h>
 static void init_npcap_dll_path(napi_env env)
 {
 	BOOL(WINAPI *SetDllDirectory)(LPCTSTR);

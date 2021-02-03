@@ -4,7 +4,6 @@ var binding       = require("./build/Release/pcap_binding");
 var decode        = require("./decode").decode;
 var tcp_tracker   = require("./tcp_tracker");
 var DNSCache      = require("./dns_cache");
-var timers        = require("timers");
 
 exports.decode = decode;
 exports.TCPTracker = tcp_tracker.TCPTracker;

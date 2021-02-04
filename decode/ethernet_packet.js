@@ -4,6 +4,8 @@ var IPv6 = require("./ipv6");
 var Arp = require("./arp");
 var Vlan = require("./vlan");
 var Ptp = require("./ptp");
+var IEEE1722 = require("./ieee1722");
+
 
 function EthernetPacket(emitter) {
     this.emitter = emitter;
@@ -37,6 +39,9 @@ EthernetPacket.prototype.decode = function (raw_packet, offset) {
     } else {
         // http://en.wikipedia.org/wiki/EtherType
         switch (this.ethertype) {
+        case 0x22f0:
+            this.payload = new IEEE1722(this.emitter).decode(raw_packet, offset);
+            break;
         case 0x88F7: // ptp
             this.payload = new Ptp(this.emitter).decode(raw_packet, offset);
             break;

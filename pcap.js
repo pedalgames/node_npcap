@@ -71,7 +71,11 @@ function PcapSession(is_live, device_name, filter, buffer_size, snap_length, out
 }
 util.inherits(PcapSession, events.EventEmitter);
 
-exports.lib_version = binding.lib_version();
+try {
+    exports.lib_version = binding.lib_version();
+} catch (e) {
+    throw 'Error in pcap_lib_version';
+}
 
 exports.findalldevs = function () {
     return binding.findalldevs();

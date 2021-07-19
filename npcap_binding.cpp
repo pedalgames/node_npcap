@@ -138,7 +138,12 @@ Napi::Array FindAllDevs(const Napi::CallbackInfo& info){
 }
 
 Napi::String LibVersion(const Napi::CallbackInfo& info){
-    return Napi::String::New(info.Env(),pcap_lib_version());
+    try {
+        return Napi::String::New(info.Env(),pcap_lib_version());
+    } catch(...) {
+        Napi::TypeError::New(info.Env(), "Error in pcap_lib_version").ThrowAsJavaScriptException();
+        return Napi::String::New(info.Env(),"Error in pcap_lib_version");
+    }
 }
 
 
